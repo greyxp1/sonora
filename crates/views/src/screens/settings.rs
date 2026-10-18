@@ -23,7 +23,7 @@ use i18n::{Language, t};
 use music::drm::Origin;
 use music::equalizer::{self, Preset};
 use music::scrobble::{Link, Secret};
-use music::{AccountChoice, Codec, SignIn, SignInPrompt, Transcode, WritingSystem};
+use music::{AccountChoice, Codec, Quality, SignIn, SignInPrompt, Transcode, WritingSystem};
 use router::{Destination, NavEntry, Screen, SettingsTab, navigate};
 use state::{
     AppSettings, CdmState, DiscordName, Drm, Failure, FullscreenControlsAutohide, Io,
@@ -85,6 +85,7 @@ const PACE: &str = "pace";
 const SAVER: &str = "saver";
 const SLEEP: &str = "sleep";
 const EQUALIZER_PRESETS: &str = "equalizer-presets";
+const STREAM_QUALITIES: &str = "stream-qualities";
 const STREAM_FORMATS: &str = "stream-formats";
 const STREAM_BITRATES: &str = "stream-bitrates";
 // the step a dragged band snaps to, in decibels
@@ -183,6 +184,7 @@ enum Slot {
     AdaptiveMenu,
     Normalisation,
     Gapless,
+    StreamQuality,
     StreamFormat,
     StreamBitrate,
     Sleep,
@@ -666,12 +668,16 @@ impl SettingsView {
                 if self.drm.read(cx).shown(cx) {
                     slots.push(Slot::Widevine);
                 }
-                if self.session.read(cx).capabilities().transcode {
-                    slots.extend([
-                        Slot::Title("settings-group-streaming"),
-                        Slot::StreamFormat,
-                        Slot::StreamBitrate,
-                    ]);
+                let capabilities = self.session.read(cx).capabilities();
+                let qualities = capabilities.qualities.len() > 1;
+                if qualities || capabilities.transcode {
+                    slots.push(Slot::Title("settings-group-streaming"));
+                }
+                if qualities {
+                    slots.push(Slot::StreamQuality);
+                }
+                if capabilities.transcode {
+                    slots.extend([Slot::StreamFormat, Slot::StreamBitrate]);
                 }
                 slots.extend([Slot::Title("settings-group-devices"), Slot::OutputDevice]);
                 let outputs = self.outputs.read(cx);
@@ -843,6 +849,10 @@ impl SettingsView {
                 t!("settings-normalisation-detail"),
             ),
             Slot::Gapless => (t!("settings-gapless"), t!("settings-gapless-detail")),
+            Slot::StreamQuality => (
+                t!("settings-stream-quality"),
+                t!("settings-stream-quality-detail"),
+            ),
             Slot::StreamFormat => (
                 t!("settings-stream-format"),
                 t!("settings-stream-format-detail"),
@@ -1088,6 +1098,7 @@ impl SettingsView {
             Slot::AdaptiveMenu => self.adaptive_menu_row(cx).element,
             Slot::Normalisation => self.playback_row(cx).element,
             Slot::Gapless => self.gapless_row(cx).element,
+            Slot::StreamQuality => self.stream_quality_row(cx).element,
             Slot::StreamFormat => self.stream_format_row(cx).element,
             Slot::StreamBitrate => self.stream_bitrate_row(cx).element,
             Slot::Sleep => self.sleep_row(cx).element,
@@ -2370,6 +2381,40 @@ impl SettingsView {
                         .update(cx, |playback, cx| playback.set_gapless(!on, cx));
                 }))
                 .into_any_element(),
+        )
+    }
+
+    /// The stream level picker, offering only the levels the signed-in service serves. A saved
+    /// level the service lacks shows as the one it plays instead.
+    fn stream_quality_row(&self, cx: &mut Context<Self>) -> Setting {
+        let theme = *cx.theme();
+        let muted = theme.muted_foreground;
+        let small = theme.text(Text::Small);
+        let offered = self.session.read(cx).capabilities().qualities;
+        let current = self.playback.read(cx).quality().within(offered);
+
+        let picker = Picker::new(
+            STREAM_QUALITIES,
+            &self.popovers,
+            i18n::lookup(quality_key(current), None),
+        )
+        .width(Picker::NARROW)
+        .items(offered.iter().map(|&quality| {
+            MenuItem::new(quality.id(), i18n::lookup(quality_key(quality), None))
+                .selected(quality == current)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.playback
+                        .update(cx, |playback, cx| playback.set_quality(quality, cx));
+                    cx.notify();
+                }))
+        }));
+
+        self.row(
+            t!("settings-stream-quality"),
+            t!("settings-stream-quality-detail"),
+            muted,
+            small,
+            picker.into_any_element(),
         )
     }
 
@@ -5262,6 +5307,16 @@ fn sleep_label(sleep: Option<Sleep>) -> SharedString {
 }
 
 /// The Fluent key naming a stream format, where `None` keeps the format the server sends.
+fn quality_key(quality: Quality) -> &'static str {
+    match quality {
+        Quality::HiRes => "settings-stream-quality-hi-res",
+        Quality::Lossless => "settings-stream-quality-lossless",
+        Quality::High => "settings-stream-quality-high",
+        Quality::Normal => "settings-stream-quality-normal",
+        Quality::Low => "settings-stream-quality-low",
+    }
+}
+
 fn codec_key(codec: Option<Codec>) -> &'static str {
     match codec {
         None => "settings-stream-format-original",

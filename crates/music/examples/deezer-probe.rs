@@ -25,7 +25,7 @@ async fn main() -> Result<()> {
     let id = track.id.clone().context("the track has no id")?;
     println!("search: {} — {} ({id})", track.name, track.artists);
 
-    let opened = client.open_stream(&id).await?;
+    let opened = client.open_stream(&id, music::Quality::default()).await?;
     println!(
         "stream: length {:?}, loudness {:?}",
         opened.duration, opened.loudness

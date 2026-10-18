@@ -21,7 +21,7 @@ use gpui::{
 use music::equalizer::{self, Gains};
 use music::lyrics::LOCAL;
 use music::scrobble::Account;
-use music::{Codec, Transcode, WritingSystem};
+use music::{Codec, Quality, Transcode, WritingSystem};
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher as _};
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
@@ -318,6 +318,9 @@ struct Values {
     /// The highest bitrate a Subsonic server is asked to send, in kilobits per second, or `None`
     /// for no ceiling.
     subsonic_bitrate: Option<u32>,
+    /// The stream level asked of a streaming service, by its settings name. A service that does
+    /// not serve it plays the nearest one it does.
+    stream_quality: String,
     /// Set once Local has been added to a list saved before it existed, so a user who turns it
     /// off afterwards is not given it back.
     local_lyrics_offered: bool,
@@ -485,6 +488,7 @@ impl Default for Values {
             output_buffer: None,
             subsonic_format: None,
             subsonic_bitrate: None,
+            stream_quality: Quality::default().id().to_owned(),
             local_lyrics_offered: false,
             subsonic_lyrics_offered: false,
             lyrics_provider_priority: lyrics_priority(&[]),
@@ -880,6 +884,12 @@ impl AppSettings {
                 .and_then(Codec::from_id),
             bitrate: self.values.subsonic_bitrate,
         }
+    }
+
+    /// The stream level asked of a streaming service. A level this build does not know reads as
+    /// the best.
+    pub fn quality(&self) -> Quality {
+        Quality::from_id(&self.values.stream_quality).unwrap_or_default()
     }
 
     pub fn lyrics_providers(&self) -> &[String] {
@@ -1335,6 +1345,11 @@ impl AppSettings {
     pub fn set_transcode(&mut self, transcode: Transcode, cx: &mut Context<Self>) {
         self.values.subsonic_format = transcode.codec.map(|codec| codec.id().to_owned());
         self.values.subsonic_bitrate = transcode.bitrate;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_quality(&mut self, quality: Quality, cx: &mut Context<Self>) {
+        self.values.stream_quality = quality.id().to_owned();
         self.schedule_save(cx);
     }
 

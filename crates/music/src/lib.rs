@@ -357,6 +357,57 @@ pub struct PlaybackConfig {
     pub gain: f32,
     pub equalizer: Equalizer,
     pub transcode: Transcode,
+    pub quality: Quality,
+}
+
+/// How good a stream to ask a streaming service for. Each provider lists the levels it serves in
+/// [`Capabilities::qualities`], plays any other level as the nearest of those through
+/// [`Quality::within`], and steps further down by itself when the account or the track has
+/// nothing at that level.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Quality {
+    Low,
+    Normal,
+    High,
+    Lossless,
+    #[default]
+    HiRes,
+}
+
+impl Quality {
+    /// Every level, best first.
+    pub const ALL: [Self; 5] = [
+        Self::HiRes,
+        Self::Lossless,
+        Self::High,
+        Self::Normal,
+        Self::Low,
+    ];
+
+    /// The name settings store the level by.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::HiRes => "hi-res",
+            Self::Lossless => "lossless",
+            Self::High => "high",
+            Self::Normal => "normal",
+            Self::Low => "low",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|quality| quality.id() == id)
+    }
+
+    /// The level out of `offered` that stands in for this one: the best at or below it, or the
+    /// lowest offered when every one is above it. It is this level itself when `offered` is
+    /// empty.
+    pub fn within(self, offered: &[Self]) -> Self {
+        let below = offered.iter().copied().filter(|level| *level <= self).max();
+        below
+            .or_else(|| offered.iter().copied().min())
+            .unwrap_or(self)
+    }
 }
 
 /// What a server that converts audio on request is asked to send. Only Subsonic honours it, and
@@ -557,6 +608,9 @@ pub struct Capabilities {
     pub pins: bool,
     /// The server converts tracks on request, as [`Transcode`] asks.
     pub transcode: bool,
+    /// The stream levels the service serves, best first. Empty when there is nothing to choose
+    /// between, so the setting stays hidden.
+    pub qualities: &'static [Quality],
 }
 
 impl Capabilities {
@@ -569,6 +623,7 @@ impl Capabilities {
         playcounts: true,
         pins: false,
         transcode: false,
+        qualities: &[],
     };
 
     /// Nothing beyond listing and playing.
@@ -578,6 +633,7 @@ impl Capabilities {
         playcounts: false,
         pins: false,
         transcode: false,
+        qualities: &[],
     };
 }
 

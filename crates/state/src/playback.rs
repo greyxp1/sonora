@@ -9,7 +9,7 @@ use gpui::{App, Context, Entity, EventEmitter, SharedString, Task};
 use music::equalizer::{Equalizer, Gains};
 use music::{
     MusicApi, PlaybackConfig, PlaybackEvent as BackendEvent, PlaybackEvents, PlaybackFactory,
-    Player, Spectrum, Track, Transcode,
+    Player, Quality, Spectrum, Track, Transcode,
 };
 use ui::{Pin, PinKind};
 
@@ -398,6 +398,7 @@ pub struct Playback {
     normalisation: bool,
     gapless: bool,
     transcode: Transcode,
+    quality: Quality,
     /// Shared with every engine started here, so a change reaches the output without a restart.
     equalizer: Equalizer,
     repeat: Repeat,
@@ -506,6 +507,7 @@ impl Playback {
         let normalisation = settings.read(cx).normalisation();
         let gapless = settings.read(cx).gapless();
         let transcode = settings.read(cx).transcode();
+        let quality = settings.read(cx).quality();
         let equalizer = Equalizer::new(
             settings.read(cx).equalizer(),
             &settings.read(cx).equalizer_gains(),
@@ -527,6 +529,7 @@ impl Playback {
             normalisation,
             gapless,
             transcode,
+            quality,
             equalizer,
             repeat,
             radio,
@@ -2110,6 +2113,10 @@ impl Playback {
         self.transcode
     }
 
+    pub fn quality(&self) -> Quality {
+        self.quality
+    }
+
     pub fn equalizer(&self) -> bool {
         self.equalizer.enabled()
     }
@@ -2163,6 +2170,18 @@ impl Playback {
         self.transcode = transcode;
         self.settings
             .update(cx, |settings, cx| settings.set_transcode(transcode, cx));
+        self.restart_engine(cx);
+    }
+
+    /// Changes the stream level asked of a streaming service. The streaming engine restarts, so
+    /// the current track reloads at the new level where it was.
+    pub fn set_quality(&mut self, quality: Quality, cx: &mut Context<Self>) {
+        if self.quality == quality {
+            return;
+        }
+        self.quality = quality;
+        self.settings
+            .update(cx, |settings, cx| settings.set_quality(quality, cx));
         self.restart_engine(cx);
     }
 
@@ -2304,6 +2323,7 @@ impl Playback {
             gain: gain(self.level),
             equalizer: self.equalizer.clone(),
             transcode: self.transcode,
+            quality: self.quality,
         };
         let (engine, events) = playback.start(config);
 
@@ -2327,6 +2347,7 @@ impl Playback {
             gain: gain(self.level),
             equalizer: self.equalizer.clone(),
             transcode: self.transcode,
+            quality: self.quality,
         };
         let (engine, events) = playback.start(config);
 

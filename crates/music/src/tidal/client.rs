@@ -23,8 +23,8 @@ use crate::tidal::{lock, wire};
 use crate::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, Genre, GenreDetail,
     GenreItem, GenreSection, HomeFeed, MediaKind, MusicApi, Page, Pages, Playlist, PlaylistDetail,
-    SUGGESTIONS, SavedArtist, SignInFailure, SignInProblem, Track, UserProfile, distinct_covers,
-    escape,
+    Quality, SUGGESTIONS, SavedArtist, SignInFailure, SignInProblem, Track, UserProfile,
+    distinct_covers, escape,
 };
 
 const V1: &str = "https://api.tidal.com/v1";
@@ -38,11 +38,12 @@ const OPENAPI: &str = "https://openapi.tidal.com/v2";
 /// `x-tidal-client-version` header the web player at listen.tidal.com sends.
 const CLIENT_VERSION: &str = "2025.7.16";
 
-/// The best quality there is. Tidal answers with the best the account and the track allow,
-/// which may be less.
-const QUALITY: &str = "HI_RES_LOSSLESS";
-/// What a track is asked for again at when its best stream is one Sonora cannot play, such as a
-/// protected or spatial one. CD quality comes as one plain FLAC file.
+/// The levels Tidal serves Sonora, best first. Hi-res comes as DASH segments of FLAC, lossless
+/// as one FLAC file and high as AAC at 320 kbps. Low is left out because it is HE-AAC, whose
+/// SBR half the decoder cannot play, so it would sound duller than its bitrate.
+pub(crate) const QUALITIES: &[Quality] = &[Quality::HiRes, Quality::Lossless, Quality::High];
+/// What a track is asked for again at when the stream it was given is one Sonora cannot play,
+/// such as a protected or spatial one. CD quality comes as one plain FLAC file.
 const FALLBACK_QUALITY: &str = "LOSSLESS";
 
 /// How many rows a listing asks for at once. Tidal refuses more than this on most listings.
@@ -842,10 +843,11 @@ impl TidalClient {
         })
     }
 
-    /// Resolves a track to a stream at the best quality the account may play, and reads what
-    /// Tidal says about its loudness on the way. A best stream Sonora cannot play is asked for
-    /// once more at `FALLBACK_QUALITY` before the track counts as unplayable.
-    pub async fn playback(&self, track_id: &str) -> Result<Playback> {
+    /// Resolves a track to a stream at `quality`, or the best below it the account and the track
+    /// allow, and reads what Tidal says about its loudness on the way. A stream Sonora cannot
+    /// play is asked for once more at `FALLBACK_QUALITY` before the track counts as unplayable.
+    pub async fn playback(&self, track_id: &str, quality: Quality) -> Result<Playback> {
+        let asked = audio_quality(quality);
         let track_path = format!("/tracks/{}", escape::component(track_id));
         let info_path = format!("{track_path}/playbackinfopostpaywall");
         let info = async |quality: &str| {
@@ -870,16 +872,19 @@ impl TidalClient {
                 wire::text(answer, "manifest").context("tidal sent no manifest")?,
             )
         };
-        let (answer, track) = tokio::join!(info(QUALITY), self.get(&track_path, &[]));
+        let (answer, track) = tokio::join!(info(asked), self.get(&track_path, &[]));
         let mut answer = answer?;
         let manifest = match manifest(&answer) {
             Ok(manifest) => manifest,
-            Err(error) if wire::text(&answer, "assetPresentation") == Some("PREVIEW") => {
+            Err(error)
+                if asked == FALLBACK_QUALITY
+                    || wire::text(&answer, "assetPresentation") == Some("PREVIEW") =>
+            {
                 return Err(error);
             }
             Err(error) => {
                 log::info!(
-                    "tidal: {track_id} cannot play at {QUALITY}, asking for {FALLBACK_QUALITY}: {error:#}"
+                    "tidal: {track_id} cannot play at {asked}, asking for {FALLBACK_QUALITY}: {error:#}"
                 );
                 answer = info(FALLBACK_QUALITY).await?;
                 manifest(&answer).with_context(|| {
@@ -1551,6 +1556,15 @@ fn path_of(url: &str) -> &str {
         .or_else(|| url.strip_prefix(V2))
         .unwrap_or(url);
     path.split('?').next().unwrap_or(path)
+}
+
+/// The `audioquality` Tidal knows a level by, after it is moved onto one Tidal serves.
+fn audio_quality(quality: Quality) -> &'static str {
+    match quality.within(QUALITIES) {
+        Quality::HiRes => "HI_RES_LOSSLESS",
+        Quality::Lossless => "LOSSLESS",
+        Quality::High | Quality::Normal | Quality::Low => "HIGH",
+    }
 }
 
 /// Whether a call failed because Tidal refused the sign-in, which no retry of a write mends.

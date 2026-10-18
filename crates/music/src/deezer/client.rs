@@ -18,7 +18,7 @@ use crate::deezer::{decrypt, wire};
 use crate::engine::Loudness;
 use crate::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistProfile, ArtistRef, HomeFeed, MediaKind,
-    MusicApi, Playlist, PlaylistDetail, SUGGESTIONS, SavedArtist, Track, UserProfile,
+    MusicApi, Playlist, PlaylistDetail, Quality, SUGGESTIONS, SavedArtist, Track, UserProfile,
     distinct_covers, escape,
 };
 
@@ -28,6 +28,9 @@ const MEDIA: &str = "https://media.deezer.com/v1/get_url";
 
 /// The audio formats `get_url` knows, best first. The license decides which ones come back.
 const FORMATS: [&str; 3] = ["FLAC", "MP3_320", "MP3_128"];
+
+/// The levels Deezer serves, best first, one for each of `FORMATS`.
+pub(crate) const QUALITIES: &[Quality] = &[Quality::Lossless, Quality::High, Quality::Normal];
 
 /// The one format user-uploaded files are served as.
 const UPLOAD_FORMAT: &str = "MP3_MISC";
@@ -430,9 +433,9 @@ impl DeezerClient {
         }
     }
 
-    /// Opens the audio of a track: track token, then a stream url from `get_url`, then the
-    /// GET itself.
-    pub async fn open_stream(&self, track_id: &str) -> Result<Opened> {
+    /// Opens the audio of a track at `quality`, or the best below it the license covers: track
+    /// token, then a stream url from `get_url`, then the GET itself.
+    pub async fn open_stream(&self, track_id: &str, quality: Quality) -> Result<Opened> {
         let data = self.track_data(track_id).await?;
         let effective_id = wire::id(&data["SNG_ID"])
             .with_context(|| format!("the deezer track {track_id} names no id"))?;
@@ -450,7 +453,7 @@ impl DeezerClient {
         let license = self.inner.session.read().await.license_token.clone();
         let formats: &[&str] = match effective_id.starts_with('-') {
             true => &[UPLOAD_FORMAT],
-            false => &FORMATS,
+            false => formats_from(quality),
         };
         let mut last = anyhow::anyhow!("no format was offered");
         for format in formats {
@@ -982,4 +985,14 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// The formats to try for a level, from its own down to the lowest.
+fn formats_from(quality: Quality) -> &'static [&'static str] {
+    let first = match quality.within(QUALITIES) {
+        Quality::HiRes | Quality::Lossless => 0,
+        Quality::High => 1,
+        Quality::Normal | Quality::Low => 2,
+    };
+    &FORMATS[first..]
 }

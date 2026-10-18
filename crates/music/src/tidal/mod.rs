@@ -174,6 +174,7 @@ async fn session(client: TidalClient) -> Result<ProviderSession> {
         authenticated: true,
         capabilities: Capabilities {
             playcounts: false,
+            qualities: client::QUALITIES,
             ..Capabilities::ALL
         },
     })

@@ -134,6 +134,7 @@ impl YouTubeProvider {
             authenticated: true,
             capabilities: Capabilities {
                 playcounts: false,
+                qualities: playback::QUALITIES,
                 ..Capabilities::ALL
             },
         }
@@ -152,6 +153,7 @@ impl YouTubeProvider {
             authenticated: false,
             capabilities: Capabilities {
                 playcounts: false,
+                qualities: playback::QUALITIES,
                 ..Capabilities::ALL
             },
         }

@@ -15,7 +15,7 @@ use crate::deezer::client::DeezerClient;
 use crate::deezer::{Stream, Striped};
 use crate::engine::{self, Fetch, Loudness};
 use crate::stream::Reader;
-use crate::{PlaybackConfig, PlaybackEvents, PlaybackFactory, Player};
+use crate::{PlaybackConfig, PlaybackEvents, PlaybackFactory, Player, Quality};
 
 /// A track downloading and decrypting, and how long and how loud Deezer says it is.
 #[derive(Clone)]
@@ -40,6 +40,7 @@ impl PlaybackFactory for Factory {
         engine::start(
             Deezer {
                 client: self.client.clone(),
+                quality: config.quality,
             },
             config,
         )
@@ -48,6 +49,8 @@ impl PlaybackFactory for Factory {
 
 struct Deezer {
     client: DeezerClient,
+    /// The level every track is asked for at.
+    quality: Quality,
 }
 
 #[async_trait]
@@ -59,10 +62,11 @@ impl Fetch for Deezer {
         "deezer"
     }
 
-    /// Resolves the stream url and its key together, since one answer carries both, and starts
-    /// the download decrypting as it arrives.
+    /// Resolves the stream url and its key together, since one answer carries both, at the
+    /// chosen level or the best below it the license covers. The download starts decrypting as
+    /// it arrives.
     async fn load(&self, id: &str) -> Result<Loaded> {
-        let opened = self.client.open_stream(id).await?;
+        let opened = self.client.open_stream(id, self.quality).await?;
         let stream = Stream::open(opened.response, Striped::new(&opened.key)).await?;
         Ok(Loaded {
             stream,
